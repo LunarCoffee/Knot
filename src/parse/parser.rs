@@ -34,7 +34,7 @@ pub trait Parser {
     fn parse_to_end(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
         let result = self.parse(reader)?;
         let mut buf = [0; 1];
-        if reader.read(&mut buf).unwrap_or(0) == 0 { Err(ParseError) } else { Ok(result) }
+        if reader.read(&mut buf).unwrap_or(1) > 0 { Err(ParseError) } else { Ok(result) }
     }
 }
 
@@ -46,6 +46,8 @@ impl<P: Parser> Parser for &P {
     }
 }
 
+// Saves the position of `reader` and calls `f`, seeking `reader` back to its original position if `f` failed. This is
+// used to implement backtracking.
 pub fn backtrack_on_fail<T, R, F>(reader: &mut R, mut f: F) -> ParseResult<T>
     where R: ReadSeek,
           F: FnMut(&mut R) -> ParseResult<T>

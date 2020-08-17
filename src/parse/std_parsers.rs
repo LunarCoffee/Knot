@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use num::Integer;
 
-use crate::parse::combinators::{MapParserExt, OptionalParserExt};
+use crate::parse::combinators::{MapParserExt, OptionalParserExt, AndParserExt};
 use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
 use crate::parse::parser;
 
@@ -55,7 +55,7 @@ impl<I: Integer + FromStr> Parser for NonNegDecimalParser<I> {
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<I> {
         parser::backtrack_on_fail(reader, |r| {
             let mut string = String::new();
-            let mut buf = vec![0];
+            let mut buf = [0; 1];
 
             while r.read(&mut buf)? > 0 {
                 if !buf[0].is_ascii_digit() {
@@ -75,21 +75,6 @@ pub fn non_neg_decimal<I: Integer + FromStr>() -> NonNegDecimalParser<I> {
 
 // Parses a decimal (base 10) number into an integer type. The representation can contain any number of leading zeroes,
 // meaning `"01"` -> `1`, `"-0032"` -> `-32`, etc.
-pub struct DecimalParser<I: Integer + FromStr + Neg<Output=I>> {
-    phantom: PhantomData<I>,
-}
-
-impl<I: Integer + FromStr + Neg<Output=I>> Parser for DecimalParser<I> {
-    type Output = I;
-
-    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<I> {
-        parser::backtrack_on_fail(reader, |r| {
-            let sign = sign().parse(r)?;
-            Ok(sign(non_neg_decimal().parse(r)?))
-        })
-    }
-}
-
-pub fn decimal<I: Integer + FromStr + Neg<Output=I>>() -> DecimalParser<I> {
-    DecimalParser { phantom: PhantomData }
+pub fn decimal<I: Integer + FromStr + Neg<Output=I>>() -> impl Parser<Output=I> {
+    sign().and(non_neg_decimal()).map(|(sign_fn, n)| sign_fn(n))
 }
