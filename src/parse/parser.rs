@@ -33,7 +33,7 @@ pub trait Parser {
     // Like `parse`, but ensures `reader` contains no more data to parse.
     fn parse_to_end(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
         let result = self.parse(reader)?;
-        let mut buf = [0; 1];
+        let mut buf = [0];
         if reader.read(&mut buf).unwrap_or(1) > 0 { Err(ParseError) } else { Ok(result) }
     }
 }

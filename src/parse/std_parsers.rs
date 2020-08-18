@@ -4,34 +4,39 @@ use std::str::FromStr;
 
 use num::Integer;
 
-use crate::parse::combinators::{MapParserExt, OptionalParserExt, AndParserExt};
+use crate::parse::combinators::{AndParserExt, MapParserExt, OptionalParserExt};
 use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
 use crate::parse::parser;
 
-// Parses a string.
-pub struct StringParser<'a> {
-    string: &'a str,
+// Parses a sequence of bytes.
+pub struct ByteSeqParser<'a> {
+    bytes: &'a [u8],
 }
 
-impl<'a> Parser for StringParser<'a> {
-    type Output = &'a str;
+impl<'a> Parser for ByteSeqParser<'a> {
+    type Output = &'a [u8];
 
-    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<&'a str> {
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
         parser::backtrack_on_fail(reader, |r| {
-            let mut buf = vec![0];
-            for b in self.string.bytes() {
+            let mut buf = [0];
+            for b in self.bytes {
                 r.read_exact(&mut buf)?;
-                if b != buf[0] {
+                if *b != buf[0] {
                     return Err(ParseError);
                 }
             }
-            Ok(self.string)
+            Ok(self.bytes)
         })
     }
 }
 
-pub fn string(string: &str) -> StringParser {
-    StringParser { string }
+pub fn bytes(bytes: &[u8]) -> ByteSeqParser {
+    ByteSeqParser { bytes }
+}
+
+// Parses a string.
+pub fn string(string: &str) -> impl Parser<Output=String> + '_ {
+    bytes(string.as_bytes()).map(|b| String::from_utf8_lossy(b).to_string())
 }
 
 // Parses an optional minus sign, returning a function which takes an integer and returns its value negated if a minus
@@ -52,10 +57,10 @@ pub struct NonNegDecimalParser<I: Integer + FromStr> {
 impl<I: Integer + FromStr> Parser for NonNegDecimalParser<I> {
     type Output = I;
 
-    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<I> {
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
         parser::backtrack_on_fail(reader, |r| {
             let mut string = String::new();
-            let mut buf = [0; 1];
+            let mut buf = [0];
 
             while r.read(&mut buf)? > 0 {
                 if !buf[0].is_ascii_digit() {
