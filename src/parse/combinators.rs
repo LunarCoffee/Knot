@@ -1,5 +1,4 @@
 use std::io::{Cursor, SeekFrom};
-use std::marker::PhantomData;
 
 use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
 use crate::parse::parser;
@@ -239,13 +238,11 @@ impl<U, P: Parser, F: Fn(P::Output) -> U> MapParserExt<U, F> for P {}
 // since this type contains only the output type `T`, avoiding the problem of infinitely expanding types.
 pub struct MutualRecursionParser<'a, T> {
     func: Box<dyn Fn(&mut dyn ReadSeek) -> ParseResult<T> + 'a>,
-    phantom: PhantomData<T>,
 }
 
 impl<'a, T> MutualRecursionParser<'a, T> {
     pub fn new(parser: impl Parser<Output=T> + 'a) -> Self {
         MutualRecursionParser {
-            phantom: PhantomData,
             func: box move |reader| {
                 // This is rather inefficient but I can't be bothered to think of a better solution at the moment.
                 let mut buf = Cursor::new(vec![]);

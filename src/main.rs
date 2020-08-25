@@ -17,8 +17,8 @@ fn main() {
     println!("{}", expr.parse_to_end(&mut input).unwrap_or(-1));
 }
 
-fn fold_step((fst, rest): (i32, Vec<(fn(i32, i32) -> i32, i32)>)) -> i32 {
-    rest.iter().fold(fst, |res, (op, n)| op(res, *n))
+fn fold_step((first, rest): (i32, Vec<(fn(i32, i32) -> i32, i32)>)) -> i32 {
+    rest.iter().fold(first, |res, (op, n)| op(res, *n))
 }
 
 fn factor() -> impl Parser<Output=i32> {
