@@ -4,9 +4,9 @@ use std::str::FromStr;
 
 use num::Integer;
 
-use crate::parse::combinators::{AndParserExt, MapParserExt, OptionalParserExt};
-use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
+use crate::parse::combinators::{AndParserExt, ManyParserExt, MapParserExt, OptionalParserExt};
 use crate::parse::parser;
+use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
 
 // Parses a sequence of bytes.
 pub struct ByteSeqParser<'a> {
@@ -39,10 +39,15 @@ pub fn string(string: &str) -> impl Parser<Output=String> + '_ {
     bytes(string.as_bytes()).map(|b| String::from_utf8_lossy(b).to_string())
 }
 
+// Parses and discards any amount of whitespace.
+pub fn spaces() -> impl Parser<Output=()> {
+    " ".many().map(|_| ())
+}
+
 // Parses an optional minus sign, returning a function which takes an integer and returns its value negated if a minus
 // sign was present, and its value without modification otherwise.
 pub fn sign<I: Integer + Neg<Output=I>>() -> impl Parser<Output=fn(I) -> I> {
-    string("-").optional().map(|str| match str {
+    "-".optional().map(|str| match str {
         Some(_) => |i: I| -i,
         _ => |i: I| i,
     })
@@ -81,5 +86,5 @@ pub fn non_neg_decimal<I: Integer + FromStr>() -> NonNegDecimalParser<I> {
 // Parses a decimal (base 10) number into an integer type. The representation can contain any number of leading zeroes,
 // meaning `"01"` -> `1`, `"-0032"` -> `-32`, etc.
 pub fn decimal<I: Integer + FromStr + Neg<Output=I>>() -> impl Parser<Output=I> {
-    sign().and(non_neg_decimal()).map(|(sign_fn, n)| sign_fn(n))
+    sign.and(non_neg_decimal).map(|(sign_fn, n)| sign_fn(n))
 }

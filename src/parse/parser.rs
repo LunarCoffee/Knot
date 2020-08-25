@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::{fmt, io};
 use std::io::{Read, Seek, SeekFrom};
+use crate::parse::std_parsers;
 
 #[derive(Debug, Clone)]
 pub struct ParseError;
@@ -28,21 +29,29 @@ pub trait Parser {
     type Output;
 
     // Parses data from `reader` until the parser is finished or an error occurs.
-    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output>;
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> where Self: Sized;
 
     // Like `parse`, but ensures `reader` contains no more data to parse.
-    fn parse_to_end(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
+    fn parse_to_end(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> where Self: Sized {
         let result = self.parse(reader)?;
         let mut buf = [0];
         if reader.read(&mut buf).unwrap_or(1) > 0 { Err(ParseError) } else { Ok(result) }
     }
 }
 
-impl<P: Parser> Parser for &P {
+impl<P: Parser, F: Fn() -> P> Parser for F {
     type Output = P::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        P::parse(self, reader)
+        self().parse(reader)
+    }
+}
+
+impl Parser for &str {
+    type Output = String;
+
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> where Self: Sized {
+        std_parsers::string(self).parse(reader)
     }
 }
 

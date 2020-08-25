@@ -1,3 +1,6 @@
+use std::io::{Cursor, SeekFrom};
+use std::marker::PhantomData;
+
 use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
 use crate::parse::parser;
 
@@ -11,7 +14,11 @@ impl<P1: Parser, P2: Parser> Parser for AndParser<P1, P2> {
     type Output = (P1::Output, P2::Output);
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| Ok((self.first.parse(r)?, self.second.parse(r)?)))
+        parser::backtrack_on_fail(reader, |r| {
+            let first = self.first.parse(r)?;
+            let second = self.second.parse(r)?;
+            Ok((first, second))
+        })
     }
 }
 
@@ -23,37 +30,27 @@ pub trait AndParserExt: Parser {
 
 impl<P: Parser> AndParserExt for P {}
 
-// Parses each of `parsers` in order, returning the first successful parse (if any).
-pub struct AnyParser<P: Parser> {
-    parsers: Vec<P>,
+// Returns the result of `first` if successful, otherwise returning the result of `second`.
+pub struct OrParser<T, P1: Parser<Output=T>, P2: Parser<Output=T>> {
+    first: P1,
+    second: P2,
 }
 
-impl<P: Parser> AnyParser<P> {
-    pub fn or(mut self, parser: P) -> Self {
-        self.parsers.push(parser);
-        self
-    }
-}
-
-impl<P: Parser> Parser for AnyParser<P> {
-    type Output = P::Output;
+impl<T, P1: Parser<Output=T>, P2: Parser<Output=T>> Parser for OrParser<T, P1, P2> {
+    type Output = T;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| self
-            .parsers
-            .iter()
-            .fold(Err(ParseError), |result, p| result.or_else(|_| p.parse(r))),
-        )
+        parser::backtrack_on_fail(reader, |r| self.first.parse(r).or_else(|_| self.second.parse(r)))
     }
 }
 
-pub trait AnyParserExt: Parser {
-    fn or(self, parser: Self) -> AnyParser<Self> where Self: Sized {
-        AnyParser { parsers: vec![self, parser] }
+pub trait OrParserExt: Parser {
+    fn or<P: Parser<Output=Self::Output>>(self, second: P) -> OrParser<Self::Output, Self, P> where Self: Sized {
+        OrParser { first: self, second }
     }
 }
 
-impl<P: Parser> AnyParserExt for P {}
+impl<P: Parser> OrParserExt for P {}
 
 // Parses `parser` `times` times, returning all results. One failure causes the entire parse to fail.
 pub struct ExactParser<P: Parser> {
@@ -230,10 +227,54 @@ impl<T, U, P: Parser<Output=T>, F: Fn(T) -> U> Parser for MapParser<T, U, P, F> 
     }
 }
 
-pub trait MapParserExt<T, U, F: Fn(T) -> U>: Parser<Output=T> {
-    fn map(self, f: F) -> MapParser<T, U, Self, F> where Self: Sized {
-        MapParser { parser: self, mapping_fn: f }
+pub trait MapParserExt<U, F: Fn(Self::Output) -> U>: Parser {
+    fn map(self, mapping_fn: F) -> MapParser<Self::Output, U, Self, F> where Self: Sized {
+        MapParser { parser: self, mapping_fn }
     }
 }
 
-impl<T, U, F: Fn(T) -> U, P: Parser<Output=T>> MapParserExt<T, U, F> for P {}
+impl<U, P: Parser, F: Fn(P::Output) -> U> MapParserExt<U, F> for P {}
+
+// Parser which wraps another parser. This is useful when writing parsers for grammars with mutually recursive rules,
+// since this type contains only the output type `T`, avoiding the problem of infinitely expanding types.
+pub struct MutualRecursionParser<'a, T> {
+    func: Box<dyn Fn(&mut dyn ReadSeek) -> ParseResult<T> + 'a>,
+    phantom: PhantomData<T>,
+}
+
+impl<'a, T> MutualRecursionParser<'a, T> {
+    pub fn new(parser: impl Parser<Output=T> + 'a) -> Self {
+        MutualRecursionParser {
+            phantom: PhantomData,
+            func: box move |reader| {
+                // This is rather inefficient but I can't be bothered to think of a better solution at the moment.
+                let mut buf = Cursor::new(vec![]);
+                let current = reader.stream_position()?;
+                reader.read_to_end(buf.get_mut())?;
+
+                // Parse then seek the original reader to the correct position, taking into account backtracking and
+                // the result of the parse.
+                let result = parser.parse(&mut buf);
+                let seek_offset = if result.is_err() { current } else { current + buf.position() };
+                reader.seek(SeekFrom::Start(seek_offset))?;
+                result
+            },
+        }
+    }
+}
+
+impl<'a, T> Parser for MutualRecursionParser<'a, T> {
+    type Output = T;
+
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> where Self: Sized {
+        (self.func)(reader)
+    }
+}
+
+pub trait MutualRecursionParserExt: Parser {
+    fn recursive<'a>(self) -> MutualRecursionParser<'a, Self::Output> where Self: Sized + 'a {
+        MutualRecursionParser::new(self)
+    }
+}
+
+impl<P: Parser> MutualRecursionParserExt for P {}
