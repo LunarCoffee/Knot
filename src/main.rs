@@ -7,32 +7,36 @@ use std::io::Cursor;
 use std::ops::{Add, Div, Mul, Sub};
 
 use crate::parse::combinators::*;
-use crate::parse::parser::Parser;
 use crate::parse::std_parsers::*;
+use crate::parse::types::Parser;
+use crate::parse::pos_reader::PositionReader;
 
+mod lang;
 mod parse;
 
 fn main() {
-    let mut input = Cursor::new("3*4*(-(2+6)+10*(2+4+-1))/7+5*(4+3)*2-2+-1*3".as_bytes()); // 137
-    println!("{}", expr.parse_to_end(&mut input).unwrap_or(-1));
+    let mut input = Cursor::new("3*4*((2+6)+10*(2+4+1))/7+5*(4+3)*2-2+1*3".as_bytes());
+    let mut input = PositionReader::new(&mut input).unwrap();
+    println!("{}", expr.parse_to_end(&mut input).unwrap());
+    println!("{}:{}", input.line(), input.col());
 }
 
-fn fold_step((first, rest): (i32, Vec<(fn(i32, i32) -> i32, i32)>)) -> i32 {
-    rest.iter().fold(first, |res, (op, n)| op(res, *n))
+fn fold_to_postfix((first, rest): (String, Vec<(String, String)>)) -> String {
+    rest.iter().fold(first, |res, (op, n)| format!("{} {} {}", res, n, op))
 }
 
-fn factor() -> impl Parser<Output=i32> {
-    non_neg_decimal::<i32>
-        .or(expr.between("(", ")").recursive())
-        .or("-".then(factor).map(|n| -n).recursive())
+fn factor() -> impl Parser<Output=String> {
+    let number = non_neg_decimal::<i32>.map(|n| n.to_string());
+    let paren_expr = expr.between("(", ")").recursive();
+    number.or(paren_expr)
 }
 
-fn term() -> impl Parser<Output=i32> {
-    let op = "*".or("/").map(|op| if op == "*" { i32::mul } else { <i32 as Div>::div });
-    factor.and(op.and(factor).many()).map(fold_step)
+fn term() -> impl Parser<Output=String> {
+    let op_and_factor = "*".or("/").and(factor);
+    factor.and(op_and_factor.many()).map(fold_to_postfix)
 }
 
-fn expr() -> impl Parser<Output=i32> {
-    let op = "+".or("-").map(|op| if op == "+" { i32::add } else { <i32 as Sub>::sub });
-    term.and(op.and(term).many()).map(fold_step)
+fn expr() -> impl Parser<Output=String> {
+    let op_and_factor = "+".or("-").and(term);
+    term.and(op_and_factor.many()).map(fold_to_postfix)
 }

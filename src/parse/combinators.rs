@@ -1,7 +1,7 @@
 use std::io::{Cursor, SeekFrom};
 
-use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
-use crate::parse::parser;
+use crate::parse::types::{ParseError, Parser, ParseResult, ReadSeek};
+use crate::parse::types;
 
 // Parses `first` then `second`, returning the result parsed by both in a tuple.
 pub struct AndParser<P1: Parser, P2: Parser> {
@@ -13,7 +13,7 @@ impl<P1: Parser, P2: Parser> Parser for AndParser<P1, P2> {
     type Output = (P1::Output, P2::Output);
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             let first = self.first.parse(r)?;
             let second = self.second.parse(r)?;
             Ok((first, second))
@@ -39,7 +39,7 @@ impl<T, P1: Parser<Output=T>, P2: Parser<Output=T>> Parser for OrParser<T, P1, P
     type Output = T;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| self.first.parse(r).or_else(|_| self.second.parse(r)))
+        types::backtrack_on_fail(reader, |r| self.first.parse(r).or_else(|_| self.second.parse(r)))
     }
 }
 
@@ -61,7 +61,7 @@ impl<P: Parser> Parser for ExactParser<P> {
     type Output = Vec<P::Output>;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             let mut results = Vec::with_capacity(self.times);
             for _ in 0..self.times {
                 results.push(self.parser.parse(r)?);
@@ -89,7 +89,7 @@ impl<P1: Parser, P2: Parser> Parser for ThenParser<P1, P2> {
     type Output = P2::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             self.first.parse(r)?;
             Ok(self.second.parse(r)?)
         })
@@ -114,7 +114,7 @@ impl<P1: Parser, P2: Parser> Parser for WithParser<P1, P2> {
     type Output = P1::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             let first_res = self.first.parse(r)?;
             self.second.parse(r)?;
             Ok(first_res)
@@ -139,7 +139,7 @@ impl<P: Parser> Parser for OptionalParser<P> {
     type Output = Option<P::Output>;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| Ok(self.parser.parse(r).ok()))
+        types::backtrack_on_fail(reader, |r| Ok(self.parser.parse(r).ok()))
     }
 }
 
@@ -161,7 +161,7 @@ impl<P: Parser> Parser for ManyParser<P> {
     type Output = Vec<P::Output>;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             let mut results = vec![];
             while let Ok(result) = self.parser.parse(r) {
                 results.push(result);
@@ -195,7 +195,7 @@ impl<P1: Parser, P2: Parser, P3: Parser> Parser for BetweenParser<P1, P2, P3> {
     type Output = P2::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             self.prefix.parse(r)?;
             let result = self.parser.parse(r)?;
             self.suffix.parse(r)?;
@@ -222,7 +222,7 @@ impl<T, U, P: Parser<Output=T>, F: Fn(T) -> U> Parser for MapParser<T, U, P, F> 
     type Output = U;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| self.parser.parse(r).map(&self.mapping_fn))
+        types::backtrack_on_fail(reader, |r| self.parser.parse(r).map(&self.mapping_fn))
     }
 }
 

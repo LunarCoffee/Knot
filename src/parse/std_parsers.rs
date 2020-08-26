@@ -5,8 +5,8 @@ use std::str::FromStr;
 use num::Integer;
 
 use crate::parse::combinators::{AndParserExt, ManyParserExt, MapParserExt, OptionalParserExt};
-use crate::parse::parser;
-use crate::parse::parser::{ParseError, Parser, ParseResult, ReadSeek};
+use crate::parse::types;
+use crate::parse::types::{ParseError, Parser, ParseResult, ReadSeek};
 
 // Parses a sequence of bytes.
 pub struct ByteSeqParser<'a> {
@@ -17,7 +17,7 @@ impl<'a> Parser for ByteSeqParser<'a> {
     type Output = &'a [u8];
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             let mut buf = [0];
             for b in self.bytes {
                 r.read_exact(&mut buf)?;
@@ -63,13 +63,13 @@ impl<I: Integer + FromStr> Parser for NonNegDecimalParser<I> {
     type Output = I;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        parser::backtrack_on_fail(reader, |r| {
+        types::backtrack_on_fail(reader, |r| {
             let mut string = String::new();
             let mut buf = [0];
 
             while r.read(&mut buf)? > 0 {
                 if !buf[0].is_ascii_digit() {
-                    parser::seek_back_one(r)?;
+                    types::seek_back_one(r)?;
                     break;
                 }
                 string.push(buf[0] as char);
