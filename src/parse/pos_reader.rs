@@ -1,7 +1,7 @@
-use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::io;
 
-use crate::parse::types::ReadSeek;
+use crate::parse::ReadSeek;
 
 // Wrapper around a `ReadSeek` which stores position information, useful for reporting errors.
 pub struct PositionReader<'a, R: ReadSeek> {
@@ -33,6 +33,19 @@ impl<'a, R: ReadSeek> PositionReader<'a, R> {
                 line_lens: vec![0],
             })
         }
+    }
+
+    // Gets the current line with the internal state of the reader appearing unchanged afterward.
+    pub fn current_line(&mut self) -> Option<String> {
+        let old_pos = self.position();
+        self.reader.seek(SeekFrom::Current(-(self.col as i64))).ok()?;
+
+        let mut buf = Vec::with_capacity(self.col as usize);
+        let mut buf_read = BufReader::new(&mut self.reader);
+        buf_read.read_until(b'\n', &mut buf).ok()?;
+
+        self.reader.seek(SeekFrom::Start(old_pos)).ok()?;
+        String::from_utf8(buf).ok()
     }
 
     pub fn position(&self) -> u64 {

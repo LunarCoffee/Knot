@@ -4,21 +4,20 @@
 #![feature(box_syntax)]
 
 use std::io::Cursor;
-use std::ops::{Add, Div, Mul, Sub};
 
+use crate::parse::{ParseError, Parser};
 use crate::parse::combinators::*;
 use crate::parse::std_parsers::*;
-use crate::parse::types::Parser;
-use crate::parse::pos_reader::PositionReader;
 
 mod lang;
 mod parse;
 
 fn main() {
-    let mut input = Cursor::new("3*4*((2+6)+10*(2+4+1))/7+5*(4+3)*2-2+1*3".as_bytes());
-    let mut input = PositionReader::new(&mut input).unwrap();
-    println!("{}", expr.parse_to_end(&mut input).unwrap());
-    println!("{}:{}", input.line(), input.col());
+    let mut input = Cursor::new("3*4*((2+6))+10*(2+4+3))/7+5*(4+3)*2-2+1*3".as_bytes());
+    println!("{}", match expr.with_position().parse_to_end(&mut input) {
+        Ok(result) => result,
+        Err(ParseError { reason }) => reason,
+    });
 }
 
 fn fold_to_postfix((first, rest): (String, Vec<(String, String)>)) -> String {

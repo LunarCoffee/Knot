@@ -4,9 +4,9 @@ use std::str::FromStr;
 
 use num::Integer;
 
+use crate::parse;
+use crate::parse::{ParseError, Parser, ParseResult, ReadSeek};
 use crate::parse::combinators::{AndParserExt, ManyParserExt, MapParserExt, OptionalParserExt};
-use crate::parse::types;
-use crate::parse::types::{ParseError, Parser, ParseResult, ReadSeek};
 
 // Parses a sequence of bytes.
 pub struct ByteSeqParser<'a> {
@@ -17,12 +17,16 @@ impl<'a> Parser for ByteSeqParser<'a> {
     type Output = &'a [u8];
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             let mut buf = [0];
             for b in self.bytes {
                 r.read_exact(&mut buf)?;
                 if *b != buf[0] {
-                    return Err(ParseError);
+                    let error = match String::from_utf8(self.bytes.to_vec()) {
+                        Ok(string) => format!("expected '{}'", string),
+                        _ => format!("expected bytes {:?}", self.bytes),
+                    };
+                    return Err(ParseError::new(&error));
                 }
             }
             Ok(self.bytes)
@@ -63,18 +67,22 @@ impl<I: Integer + FromStr> Parser for NonNegDecimalParser<I> {
     type Output = I;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             let mut string = String::new();
             let mut buf = [0];
 
             while r.read(&mut buf)? > 0 {
                 if !buf[0].is_ascii_digit() {
-                    types::seek_back_one(r)?;
+                    parse::seek_back_one(r)?;
                     break;
                 }
                 string.push(buf[0] as char);
             }
-            string.parse::<I>().map_err(|_| ParseError)
+
+            string.parse::<I>().map_err(|_| {
+                let message = format!("decimal integer literal too large: {}", string);
+                ParseError::new(&message)
+            })
         })
     }
 }
@@ -87,4 +95,26 @@ pub fn non_neg_decimal<I: Integer + FromStr>() -> NonNegDecimalParser<I> {
 // meaning `"01"` -> `1`, `"-0032"` -> `-32`, etc.
 pub fn decimal<I: Integer + FromStr + Neg<Output=I>>() -> impl Parser<Output=I> {
     sign.and(non_neg_decimal).map(|(sign_fn, n)| sign_fn(n))
+}
+
+// Parses an EOF error.
+pub struct EofParser;
+
+impl Parser for EofParser {
+    type Output = ();
+
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
+        parse::backtrack_on_fail(reader, |r| {
+            let mut buf = [0];
+            match r.read(&mut buf) {
+                Ok(0) => Ok(()),
+                Ok(_) => Err(ParseError::new(&format!("unexpected '{}'", buf[0] as char))),
+                _ => Err(ParseError::new("expected eof"))
+            }
+        })
+    }
+}
+
+pub fn eof() -> EofParser {
+    EofParser
 }

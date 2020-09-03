@@ -1,7 +1,8 @@
 use std::io::{Cursor, SeekFrom};
 
-use crate::parse::types::{ParseError, Parser, ParseResult, ReadSeek};
-use crate::parse::types;
+use crate::parse::{ParseError, Parser, ParseResult, ReadSeek};
+use crate::parse;
+use crate::parse::pos_reader::PositionReader;
 
 // Parses `first` then `second`, returning the result parsed by both in a tuple.
 pub struct AndParser<P1: Parser, P2: Parser> {
@@ -13,7 +14,7 @@ impl<P1: Parser, P2: Parser> Parser for AndParser<P1, P2> {
     type Output = (P1::Output, P2::Output);
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             let first = self.first.parse(r)?;
             let second = self.second.parse(r)?;
             Ok((first, second))
@@ -39,7 +40,7 @@ impl<T, P1: Parser<Output=T>, P2: Parser<Output=T>> Parser for OrParser<T, P1, P
     type Output = T;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| self.first.parse(r).or_else(|_| self.second.parse(r)))
+        parse::backtrack_on_fail(reader, |r| self.first.parse(r).or_else(|_| self.second.parse(r)))
     }
 }
 
@@ -61,7 +62,7 @@ impl<P: Parser> Parser for ExactParser<P> {
     type Output = Vec<P::Output>;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             let mut results = Vec::with_capacity(self.times);
             for _ in 0..self.times {
                 results.push(self.parser.parse(r)?);
@@ -89,7 +90,7 @@ impl<P1: Parser, P2: Parser> Parser for ThenParser<P1, P2> {
     type Output = P2::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             self.first.parse(r)?;
             Ok(self.second.parse(r)?)
         })
@@ -114,7 +115,7 @@ impl<P1: Parser, P2: Parser> Parser for WithParser<P1, P2> {
     type Output = P1::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             let first_res = self.first.parse(r)?;
             self.second.parse(r)?;
             Ok(first_res)
@@ -139,7 +140,7 @@ impl<P: Parser> Parser for OptionalParser<P> {
     type Output = Option<P::Output>;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| Ok(self.parser.parse(r).ok()))
+        parse::backtrack_on_fail(reader, |r| Ok(self.parser.parse(r).ok()))
     }
 }
 
@@ -161,12 +162,14 @@ impl<P: Parser> Parser for ManyParser<P> {
     type Output = Vec<P::Output>;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             let mut results = vec![];
-            while let Ok(result) = self.parser.parse(r) {
+            let mut parse_result = self.parser.parse(r);
+            while let Ok(result) = parse_result {
                 results.push(result);
+                parse_result = self.parser.parse(r);
             }
-            if results.is_empty() && self.min_one { Err(ParseError) } else { Ok(results) }
+            if results.is_empty() && self.min_one { Err(parse_result.err().unwrap()) } else { Ok(results) }
         })
     }
 }
@@ -195,7 +198,7 @@ impl<P1: Parser, P2: Parser, P3: Parser> Parser for BetweenParser<P1, P2, P3> {
     type Output = P2::Output;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| {
+        parse::backtrack_on_fail(reader, |r| {
             self.prefix.parse(r)?;
             let result = self.parser.parse(r)?;
             self.suffix.parse(r)?;
@@ -222,7 +225,7 @@ impl<T, U, P: Parser<Output=T>, F: Fn(T) -> U> Parser for MapParser<T, U, P, F> 
     type Output = U;
 
     fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
-        types::backtrack_on_fail(reader, |r| self.parser.parse(r).map(&self.mapping_fn))
+        parse::backtrack_on_fail(reader, |r| self.parser.parse(r).map(&self.mapping_fn))
     }
 }
 
@@ -275,3 +278,52 @@ pub trait MutualRecursionParserExt: Parser {
 }
 
 impl<P: Parser> MutualRecursionParserExt for P {}
+
+// Wraps a parser with a position tracking reader, adding detail (line/column number, line content, error location) to
+// error messages.
+pub struct PositionTrackingParser<P: Parser> {
+    parser: P,
+}
+
+impl<P: Parser> PositionTrackingParser<P> {
+    pub fn new(parser: P) -> Self {
+        PositionTrackingParser { parser }
+    }
+
+    fn parse_internal(&self, reader: &mut impl ReadSeek, to_end: bool) -> ParseResult<P::Output> {
+        let mut reader = PositionReader::new(reader).ok_or(ParseError::new("reader is not at start of stream"))?;
+        let result = if to_end { self.parser.parse_to_end(&mut reader) } else { self.parser.parse(&mut reader) };
+
+        result.map_err(|ParseError { reason }| {
+            let line = reader.current_line().unwrap();
+            let col = reader.col() + 1;
+
+            let position_part = format!("error ({}:{}):", reader.line() + 1, col);
+            let line_padding = " ".repeat(position_part.len() + 1);
+            let cursor_padding = " ".repeat(position_part.len() + col as usize);
+
+            let message = format!("{} {}\n{}{}\n{}^", position_part, reason, line_padding, line, cursor_padding);
+            ParseError::new(&message)
+        })
+    }
+}
+
+impl<P: Parser> Parser for PositionTrackingParser<P> {
+    type Output = P::Output;
+
+    fn parse(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> {
+        self.parse_internal(reader, false)
+    }
+
+    fn parse_to_end(&self, reader: &mut impl ReadSeek) -> ParseResult<Self::Output> where Self: Sized {
+        self.parse_internal(reader, true)
+    }
+}
+
+pub trait PositionTrackingParserExt: Parser {
+    fn with_position(self) -> PositionTrackingParser<Self> where Self: Sized {
+        PositionTrackingParser::new(self)
+    }
+}
+
+impl<P: Parser> PositionTrackingParserExt for P {}
